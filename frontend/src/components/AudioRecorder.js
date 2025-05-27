@@ -1,140 +1,210 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useRef } from 'react';
+import axios from 'axios';
 
-const AudioRecorder = () => {
+const AudioRecorder = ({ onTranscription }) => {
   const [isRecording, setIsRecording] = useState(false);
-  const [mediaRecorder, setMediaRecorder] = useState(null);
-  const [audioChunks, setAudioChunks] = useState([]);
-  const [recordingDuration, setRecordingDuration] = useState(0);
-  const [transcribedText, setTranscribedText] = useState('');
-  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcription, setTranscription] = useState('');
+  const [error, setError] = useState(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
-  useEffect(() => {
-    let interval;
-    if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingDuration(prev => prev + 1);
-      }, 1000);
-    } else {
-      setRecordingDuration(0);
-    }
-    return () => clearInterval(interval);
-  }, [isRecording]);
-
-  const sendAudioToBackend = async (audioBlob) => {
+  const startRecording = async () => {
     try {
-      setIsTranscribing(true);
-      const formData = new FormData();
-      formData.append('audio_file', audioBlob, 'recording.wav');
+      setError(null);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorderRef.current = new MediaRecorder(stream);
+      audioChunksRef.current = [];
 
-      const response = await fetch('http://localhost:8000/api/v1/transcribe', {
-        method: 'POST',
-        body: formData,
-      });
+      mediaRecorderRef.current.ondataavailable = (event) => {
+        audioChunksRef.current.push(event.data);
+      };
 
-      if (!response.ok) {
-        throw new Error('Transcription failed');
-      }
-
-      const data = await response.json();
-      setTranscribedText(data.text);
-    } catch (error) {
-      console.error('Error sending audio to backend:', error);
-      alert('Error transcribing audio. Please try again.');
-    } finally {
-      setIsTranscribing(false);
+      mediaRecorderRef.current.start();
+      setIsRecording(true);
+    } catch (err) {
+      setError('Error accessing microphone. Please ensure microphone permissions are granted.');
+      console.error('Error starting recording:', err);
     }
   };
 
-  const startRecording = useCallback(async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
-      
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          setAudioChunks((chunks) => [...chunks, event.data]);
-        }
+  const stopRecording = async () => {
+    if (!mediaRecorderRef.current) return;
+
+    return new Promise((resolve) => {
+      mediaRecorderRef.current.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
+        await processAudio(audioBlob);
+        resolve();
       };
 
-      recorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
-        console.log('Recording stopped, audio blob created:', audioBlob);
-        
-        // Display recording info
-        const recordingInfo = document.getElementById('recording-info');
-        if (recordingInfo) {
-          recordingInfo.textContent = `Recording completed! Duration: ${recordingDuration}s, Size: ${(audioBlob.size / 1024).toFixed(2)}KB`;
-        }
-
-        // Send to backend for transcription
-        await sendAudioToBackend(audioBlob);
-      };
-
-      recorder.start();
-      setMediaRecorder(recorder);
-      setIsRecording(true);
-      setAudioChunks([]); // Clear previous chunks
-      setTranscribedText(''); // Clear previous transcription
-    } catch (error) {
-      console.error('Error accessing microphone:', error);
-      alert('Error accessing microphone. Please ensure you have granted microphone permissions.');
-    }
-  }, [audioChunks, recordingDuration]);
-
-  const stopRecording = useCallback(() => {
-    if (mediaRecorder && isRecording) {
-      mediaRecorder.stop();
-      mediaRecorder.stream.getTracks().forEach(track => track.stop());
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       setIsRecording(false);
+    });
+  };
+
+  const processAudio = async (audioBlob) => {
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('audio_file', audioBlob, 'recording.wav');
+
+      const response = await axios.post('http://localhost:8000/api/v1/transcribe', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000, // 30 second timeout
+      });
+
+      const transcribedText = response.data.text;
+      setTranscription(transcribedText);
+      
+      // Call the onTranscription callback with the transcribed text
+      if (onTranscription) {
+        onTranscription(transcribedText);
+      }
+    } catch (err) {
+      let errorMessage = 'An error occurred while processing the audio.';
+      
+      if (err.response) {
+        // Server responded with an error
+        errorMessage = err.response.data.detail || errorMessage;
+      } else if (err.request) {
+        // Request was made but no response received
+        errorMessage = 'Could not connect to the server. Please check your connection.';
+      }
+      
+      setError(errorMessage);
+      console.error('Error processing audio:', err);
+    } finally {
+      setIsProcessing(false);
     }
-  }, [mediaRecorder, isRecording]);
+  };
+
+  const handleRetry = async () => {
+    setError(null);
+    setTranscription('');
+    await startRecording();
+  };
 
   return (
     <div className="audio-recorder">
-      <button
-        onClick={isRecording ? stopRecording : startRecording}
-        style={{
-          padding: '10px 20px',
-          fontSize: '16px',
-          backgroundColor: isRecording ? '#ff4444' : '#4CAF50',
-          color: 'white',
-          border: 'none',
-          borderRadius: '5px',
-          cursor: 'pointer',
-          marginBottom: '10px'
-        }}
-      >
-        {isRecording ? 'Stop Recording' : 'Start Recording'}
-      </button>
-      {isRecording && (
-        <div style={{ color: '#ff4444', marginBottom: '10px' }}>
-          Recording in progress... ({recordingDuration}s)
+      <div className="controls">
+        <button 
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={isProcessing}
+          className={`record-button ${isRecording ? 'recording' : ''}`}
+        >
+          {isRecording ? 'Stop Recording' : 'Start Recording'}
+        </button>
+        
+        {error && (
+          <div className="error-message">
+            <p>{error}</p>
+            <button onClick={handleRetry} className="retry-button">
+              Try Again
+            </button>
+          </div>
+        )}
+      </div>
+
+      {isProcessing && (
+        <div className="processing-message">
+          Processing audio... Please wait.
         </div>
       )}
-      <div id="recording-info" style={{ 
-        marginTop: '10px', 
-        padding: '10px',
-        backgroundColor: '#f0f0f0',
-        borderRadius: '5px',
-        minHeight: '20px'
-      }}></div>
-      {isTranscribing && (
-        <div style={{ marginTop: '10px', color: '#666' }}>
-          Transcribing audio...
+
+      {transcription && (
+        <div className="transcription">
+          <h3>Transcription:</h3>
+          <p style={{ color: '#111', fontSize: '20px', fontWeight: 500, margin: 0 }}>{transcription}</p>
         </div>
       )}
-      {transcribedText && (
-        <div style={{ 
-          marginTop: '10px', 
-          padding: '10px',
-          backgroundColor: '#e8f5e9',
-          borderRadius: '5px',
-          textAlign: 'left'
-        }}>
-          <strong>Transcribed Text:</strong>
-          <p>{transcribedText}</p>
-        </div>
-      )}
+
+      <style jsx>{`
+        .audio-recorder {
+          padding: 20px;
+          max-width: 600px;
+          margin: 0 auto;
+        }
+
+        .controls {
+          margin-bottom: 20px;
+        }
+
+        .record-button {
+          padding: 10px 20px;
+          font-size: 16px;
+          border: none;
+          border-radius: 5px;
+          background-color: #007bff;
+          color: white;
+          cursor: pointer;
+          transition: background-color 0.3s;
+        }
+
+        .record-button:hover {
+          background-color: #0056b3;
+        }
+
+        .record-button.recording {
+          background-color: #dc3545;
+        }
+
+        .record-button:disabled {
+          background-color: #6c757d;
+          cursor: not-allowed;
+        }
+
+        .error-message {
+          margin-top: 10px;
+          padding: 10px;
+          background-color: #f8d7da;
+          border: 1px solid #f5c6cb;
+          border-radius: 5px;
+          color: #721c24;
+        }
+
+        .retry-button {
+          margin-top: 10px;
+          padding: 5px 15px;
+          background-color: #dc3545;
+          color: white;
+          border: none;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+
+        .processing-message {
+          margin: 10px 0;
+          padding: 10px;
+          background-color: #e2e3e5;
+          border-radius: 5px;
+          text-align: center;
+        }
+
+        .transcription {
+          margin-top: 20px;
+          padding: 15px;
+          background-color: #f8f9fa;
+          border-radius: 5px;
+        }
+
+        .transcription h3 {
+          margin-top: 0;
+          color: #343a40;
+        }
+
+        .transcription p {
+          color: #212529;
+          font-size: 16px;
+          line-height: 1.5;
+          margin: 0;
+        }
+      `}</style>
     </div>
   );
 };
