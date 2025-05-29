@@ -9,7 +9,7 @@ function App() {
   const handleTranscription = async (text) => {
     try {
       // Get gesture sequence from backend
-      const response = await fetch('http://localhost:8000/api/v1/translate', {
+      const response = await fetch('http://localhost:8002/api/v1/translate', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -40,7 +40,7 @@ function App() {
         </div>
       </main>
 
-      <style jsx>{`
+      <style>{`
         .App {
           min-height: 100vh;
           display: flex;

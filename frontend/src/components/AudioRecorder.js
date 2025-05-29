@@ -52,7 +52,7 @@ const AudioRecorder = ({ onTranscription }) => {
       const formData = new FormData();
       formData.append('audio_file', audioBlob, 'recording.wav');
 
-      const response = await axios.post('http://localhost:8000/api/v1/transcribe', formData, {
+      const response = await axios.post('http://localhost:8002/api/v1/transcribe', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -124,7 +124,7 @@ const AudioRecorder = ({ onTranscription }) => {
         </div>
       )}
 
-      <style jsx>{`
+      <style>{`
         .audio-recorder {
           padding: 20px;
           max-width: 600px;

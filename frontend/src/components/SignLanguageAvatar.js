@@ -39,11 +39,19 @@ const SignLanguageAvatar = ({ gestureSequence }) => {
     // Load avatar model
     SceneLoader.ImportMesh(
       "",
-      "https://assets.babylonjs.com/meshes/",
+      "/",
       "HVGirl.glb",
       scene,
       (meshes) => {
-        const avatar = meshes[0];
+        console.log('Loaded meshes:', meshes);
+        // Log all mesh names
+        console.log('All mesh names:');
+        scene.meshes.forEach(m => console.log(m.name));
+        let avatar = meshes[0];
+        if (avatar.getChildMeshes && avatar.getChildMeshes().length > 0) {
+          avatar = avatar.getChildMeshes()[0];
+          console.log('Using child mesh for animation:', avatar);
+        }
         avatar.scaling = new Vector3(0.1, 0.1, 0.1);
         avatar.position = new Vector3(0, 0, 0);
         avatarRef.current = avatar;
@@ -73,8 +81,9 @@ const SignLanguageAvatar = ({ gestureSequence }) => {
 
     const playGesture = async (gestureId) => {
       try {
-        const response = await fetch(`http://localhost:8000/api/v1/gesture/${gestureId}`);
+        const response = await fetch(`http://localhost:8002/api/v1/gesture/${gestureId}`);
         const gestureData = await response.json();
+        console.log('Playing gesture:', gestureId, gestureData, avatarRef.current);
 
         // Create animation
         const frameRate = 60;
@@ -97,9 +106,11 @@ const SignLanguageAvatar = ({ gestureSequence }) => {
         }));
         babylonAnimation.setKeys(keyFrames);
 
-        // Apply animation to avatar
-        avatarRef.current.animations = [babylonAnimation];
-        sceneRef.current.beginAnimation(avatarRef.current, 0, keyFrames.length - 1);
+        // Apply animation to all meshes in the scene for maximum visibility
+        sceneRef.current.meshes.forEach(mesh => {
+          mesh.animations = [babylonAnimation];
+          sceneRef.current.beginAnimation(mesh, 0, keyFrames.length - 1);
+        });
 
         // Wait for animation to complete
         await new Promise(resolve => setTimeout(resolve, gestureData.duration));
@@ -121,7 +132,7 @@ const SignLanguageAvatar = ({ gestureSequence }) => {
   return (
     <div className="avatar-container">
       <canvas ref={canvasRef} className="avatar-canvas" />
-      <style jsx>{`
+      <style>{`
         .avatar-container {
           width: 100%;
           height: 400px;
